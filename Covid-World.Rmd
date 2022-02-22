@@ -1,0 +1,267 @@
+---
+title: "COVID 19 Analysis- World"
+author: "Rajesh Sharma"
+date: "2/21/2022"
+output:
+  html_document: default
+  pdf_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+## R Packages used
+Tidyverse packages
+For more info on tidyverse packages that we will be using, go to <https://www.tidyverse.org/packages/>
+
+```{r results='hide', message=FALSE, warning=FALSE}
+library(tidyverse)
+library(lubridate)
+```
+
+# Analysis of "Covid 19 data- World"
+
+
+## Source of Data
+Data used in this Analysis is used from the John Hopkins Covid 19 Data. This time series summary data is available at
+<https://github.com/CSSEGISandData/COVID-19/tree/master/csse_covid_19_data/csse_covid_19_time_series>.
+
+1. Global Covid 19 Confirmed Cases data from "time_series_covid19_confirmed_global.csv"
+
+2. Global Covid 19 Confirmed deaths data from "time_series_covid19_deaths_global.csv"
+
+3. World Population Data from   <https://github.com/CSSEGISandData/COVID-19/raw/master/csse_covid_19_data/UID_ISO_FIPS_LookUp_Table.csv>
+
+
+
+```{r get_covid_data, message = FALSE }
+## get url of the data
+
+url_in <- "https://github.com/CSSEGISandData/COVID-19/raw/master/csse_covid_19_data/csse_covid_19_time_series/"
+
+file_names <- c( "time_series_covid19_confirmed_global.csv","time_series_covid19_deaths_global.csv")
+
+urls <- str_c(url_in,file_names)
+
+global_cases <- read_csv(urls[1])
+global_deaths <- read_csv(urls[2])
+
+```
+
+### Clean the Data set by removing unnecessary fields.
+
+```{r clean_covid_data }
+
+global_cases <- global_cases %>% 
+                pivot_longer(cols = -c(`Province/State`,`Country/Region`, Lat, Long), names_to = "date", values_to = "cases") %>% 
+                select(-c(Lat, Long))
+
+global_deaths <- global_deaths %>% 
+                 pivot_longer(cols = -c(`Province/State`,`Country/Region`, Lat, Long), names_to = "date", values_to = "deaths") %>%
+                 select(-c(Lat, Long))
+
+## Join confirmed cases with deaths, rename few columns for ease and convert data from string to date
+global <- global_cases %>% 
+            full_join(global_deaths) %>%
+            rename(Country_Region=`Country/Region`, Province_State=`Province/State`) %>% 
+            mutate(date=mdy(date)) %>% 
+            filter(cases>0)
+
+```
+
+
+### Add the population dataset for our Analysis in the data set
+```{r add_population_data, message = FALSE}
+
+uid_lookup_url <- "https://github.com/CSSEGISandData/COVID-19/raw/master/csse_covid_19_data/UID_ISO_FIPS_LookUp_Table.csv"
+
+uid <- read_csv(uid_lookup_url) %>%
+        select(-c(Lat ,Long_ ,Combined_Key,code3 ,iso2  , iso3  ,Admin2))
+
+global <- global %>% 
+          unite("Combined_Key", 
+                c(Province_State,Country_Region),
+                sep = ", ",
+                na.rm = TRUE,
+                remove=FALSE)
+
+global <- global %>% 
+  left_join(uid, by= c("Province_State","Country_Region")) %>%
+  select(-c(UID, FIPS)) %>%
+  select(Province_State,Country_Region, date, cases, deaths,Population, Combined_Key)
+
+global_by_country <- global %>%
+               group_by(Country_Region , date) %>%
+              summarize(cases=sum(cases, na.rm=T), deaths=sum(deaths, na.rm=T),Population=sum(Population, na.rm=T)) %>%
+               mutate(deaths_per_mill=deaths*1000000/Population, cases_per_mill=cases*1000000/Population) %>%
+              select(Country_Region, date, cases, deaths, deaths_per_mill,cases_per_mill, Population) %>%
+          ungroup()
+
+
+```
+
+## Data Analysis 1
+
+Measure the Covid cases and deaths count in the top 10 countries to find out which countries are more impacted. This will give us an indication of which countries need more help in case it doesn't have resources. In this analysis, we will use countries where total counts of cases and deaths are more and not the cases per million.
+
+
+```{r covid_top_countries}
+# get the latest case count i.e. for the most recent date data is available.
+
+latest_stat_by_country <- global_by_country %>%
+                            group_by(Country_Region) %>%
+                            arrange(desc(date)) %>%
+                            filter(row_number()==1)%>%
+                            ungroup()
+
+# top ten countries
+top_ten_countries_by_cases <- latest_stat_by_country %>% 
+                              arrange(desc(cases)) %>% 
+                               head(10) 
+#get the latest date
+latest_date <- top_ten_countries_by_cases %>% head(1) %>%  pull(date)
+
+top_ten_countries_by_cases_data_plot <- top_ten_countries_by_cases %>%
+                ggplot(aes(x=Country_Region, y=cases_per_mill, fill=Country_Region)) +
+                geom_bar(stat = "identity")+
+                guides(fill=guide_legend(title="Country"))+
+                labs(x="Country", y="Covid Cases per Million",
+                title= paste("Latest Covid Cases Top 10 Countries as Date : ", as.character(latest_date)) )
+
+
+
+ ggsave("top_ten_countries_by_cases_data_plot.png", top_ten_countries_by_cases_data_plot, 
+        height=6, width=10, units="in",  dpi=450)
+
+ # top ten countries by death
+top_ten_countries_by_death <- latest_stat_by_country %>% 
+                              arrange(desc(deaths)) %>% 
+                               head(10) 
+
+
+top_ten_countries_by_death_data_plot <- top_ten_countries_by_death %>%
+                ggplot(aes(x=Country_Region, y=deaths_per_mill, fill=Country_Region)) +
+                geom_bar(stat = "identity")+
+                guides(fill=guide_legend(title="Country"))+
+                labs(x="Country", y="Covid death per Million",
+                title=paste("Latest Covid Deaths Top 10 Countries as Date : ", as.character(latest_date)) )
+
+
+
+ ggsave("top_ten_countries_by_death_data_plot.png", top_ten_countries_by_death_data_plot, 
+        height=6, width=10, units="in",  dpi=450)
+
+ 
+knitr::include_graphics("top_ten_countries_by_cases_data_plot.png")
+knitr::include_graphics("top_ten_countries_by_death_data_plot.png")
+
+```
+
+## Conclusion
+
+#### Covid Cases
+
+When the number of covid cases was analyzed, I found out that France is the most impacted country in the top ten whereas India is having the lowest cases per million of population. This data also provides information that European countries were more impacted along with the US and Brazil. Most of the countries have similar incomes, age demographics, and the same lifestyle pattern.
+
+#### Covid Deaths
+
+When the number of covid deaths was analyzed, I found out that Peru is the most impacted country where the death rate is significantly higher. Most European countries where cases were high are missing and other countries like Mexico, Indonesia, and Columbia are in the top ten. These countries need help and resources to control the death rate as vaccination rates are very low and they spend less money on health services.
+
+
+
+## Data Analysis 2 - Visualize the covid daily cases pattern in the top five countries
+
+In this analysis, I am trying to see if the top five covid countries have similar covid spread patterns or not. This will give us the indication of the covid spread cycle.
+
+```{r covid_top_five_countries}
+# get the top five country list
+
+top_five_case_countries <- latest_stat_by_country %>% arrange(desc(cases)) %>% head(5) %>%  pull(Country_Region)
+
+top_five_countries_daily_cases <- global_by_country %>% 
+                                filter(Country_Region %in% top_five_case_countries)  %>% 
+                                mutate(new_cases=cases-lag(cases), new_deaths=deaths-lag(deaths)) %>% 
+                                filter(new_cases>0) %>%
+               mutate(new_cases_per_mill=new_cases*1000000/Population,
+                      new_deaths_per_mill=new_deaths*1000000/Population) %>%
+              select(Country_Region, date, new_cases_per_mill, new_deaths_per_mill) 
+
+
+ 
+  top_five_countries_daily_cases_plot <- top_five_countries_daily_cases %>% 
+              ggplot(aes(x=date, y=new_cases_per_mill , colour=Country_Region))+
+              geom_line(size=1) +
+              scale_color_discrete(name = "Country")+
+              scale_y_log10()+
+              theme_classic() + 
+              labs(x="Date", y="Covid cases count per million",
+               title="Daily covid new cases time series")
+
+
+ ggsave("top_five_countries_daily_cases_plot.png", top_five_countries_daily_cases_plot, 
+        height=6, width=10, units="in",  dpi=450)
+
+ 
+knitr::include_graphics("top_five_countries_daily_cases_plot.png")
+
+```
+
+## Conclusion
+
+As we see in the graph, the graph of every country is not following the same spread pattern. For example at the start of 2021 covid cases were dropping in India but it was increasing in the US. Initially, the covid pattern was the same in every country but the second wave i.e. the delta variant spread was different in every country. Also, the latest omicron variant is spreading identical in all countries.
+
+
+
+
+##  Model- Try to find out if covid cases count in the US is correlated to covid cases in other top five countries.
+
+In this analysis, I will try to create a linear model to see if USA total covid daily cases have any relation with combined daily cases with other countries in the top five. I assume that covid cases in some of the variants spread in different countries in different phases.
+
+```{r us_cases_vs_other_countries}
+
+
+  us_vs_other_country_cases <- top_five_countries_daily_cases %>% select(Country_Region ,date , new_cases_per_mill  )  %>% 
+         mutate(IS_US = ifelse(Country_Region=='US', "Yes", "No")) %>% 
+        group_by(IS_US,date) %>%
+      summarize(new_cases_per_mill=mean(new_cases_per_mill, na.rm=T)) %>%
+     ungroup() %>%
+  pivot_wider(names_from = IS_US , values_from = new_cases_per_mill) %>%
+     drop_na() %>%
+    rename(OTHER_COUNTRY_CASES_PER_MILLION=`No`, US_CASES_PER_MILLION=`Yes`)
+
+  
+  mod <- lm(US_CASES_PER_MILLION ~ OTHER_COUNTRY_CASES_PER_MILLION, data=us_vs_other_country_cases)
+
+us_vs_other_country_cases_w_pred <- us_vs_other_country_cases %>% mutate(pred=predict(mod))
+
+us_vs_other_country_cases_w_pred_plot <- us_vs_other_country_cases_w_pred %>% ggplot() +
+  geom_point(aes(x=OTHER_COUNTRY_CASES_PER_MILLION, y=US_CASES_PER_MILLION), color="blue") +
+   geom_point(aes(x=OTHER_COUNTRY_CASES_PER_MILLION, y=pred), color="red")+
+  labs(x="Other top five Countries Cases Count per Million", y="US Daily Covid Cases Count per Million")
+
+  
+
+ggsave("us_vs_other_country_cases_w_pred_plot.png", us_vs_other_country_cases_w_pred_plot, 
+      height=8, width=10, units="in",  dpi=450)
+
+knitr::include_graphics("us_vs_other_country_cases_w_pred_plot.png")
+
+```
+
+##  Conclusion
+
+The linear model is showing some correlation between US cases and other top-five country cases. The covid spread pattern is a little different, in the different waves so the model is not predicting results at a high confidence rate.  When I looked at the "Multiple R-squared" value of the model then its value is approximately 0.6.  This proves our hypothesis that covid cases in some of the variants spread in different countries in different phases.
+
+
+
+## Bias in my Analysis
+
+I can potentially see the biases in my analysis by treating all the country data the same. I am from India and with high confidence, I can say that the Indian number is under reported as people there don't go for testing when the symptoms are mild. China is the most populated country and they are not in the top ten so that creates some doubt in my analysis but we all know that many countries suppresses the data due to political reasons.
+
+
+
+## Session Information for the R Environment Information
+
+```{r }
+sessionInfo()
+```

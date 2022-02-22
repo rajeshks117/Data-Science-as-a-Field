@@ -1,0 +1,244 @@
+---
+title: "NYPD Shooting Incident Data (Historic) Analysis"
+author: "Rajesh Sharma"
+date: "2/20/2022"
+output:
+  html_document: default
+  pdf_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+## R Packages used
+Tidyverse packages
+For more info on tidyverse packages that we will be using, go to <https://www.tidyverse.org/packages/>
+
+```{r results='hide', message=FALSE, warning=FALSE}
+library(tidyverse)
+library(lubridate)
+```
+
+# Analysis of "NYPD Shooting Incident Data data"
+
+
+## Source of Data
+Data used in this Analysis is used from the City of New York Dataset available for public consumption from <https://data.cityofnewyork.us>.
+
+1. NYPD Shooting Incident Data (Historic) data from <https://data.cityofnewyork.us/api/views/833y-fsy8/rows.csv>
+
+2. New York City Borough population data from <https://data.cityofnewyork.us/api/views/xywu-7bv9/rows.csv>
+
+3. New York Unemployment Data from Federal Reserve Bank of St. Louis  <https://fred.stlouisfed.org/graph/fredgraph.csv?bgcolor=%23e1e9f0&chart_type=line&drp=0&fo=open%20sans&graph_bgcolor=%23ffffff&height=450&mode=fred&recession_bars=on&txtcolor=%23444444&ts=12&tts=12&width=1168&nt=0&thu=0&trc=0&show_legend=yes&show_axis_titles=yes&show_tooltip=yes&id=NYUR&scale=left&cosd=1976-01-01&coed=2021-12-01&line_color=%234572a7&link_values=false&line_style=solid&mark_type=none&mw=3&lw=2&ost=-99999&oet=99999&mma=0&fml=a&fq=Monthly&fam=avg&fgst=lin&fgsnd=2020-02-01&line_index=1&transformation=lin&vintage_date=2022-01-30&revision_date=2022-01-30&nd=1976-01-01>
+
+
+```{r get_nypd_data}
+## get url of the data
+
+nypd_data_url <- "https://data.cityofnewyork.us/api/views/833y-fsy8/rows.csv"
+
+## load the data
+nypd_shooting_data <- read_csv(nypd_data_url)
+
+```
+
+## Clean the Data set by removing uneccessary fields.
+
+```{r clean_nypd_data}
+
+nypd_shooting_data <- nypd_shooting_data %>% 
+                      select(OCCUR_DATE,OCCUR_TIME, BORO,PERP_AGE_GROUP, 
+                             PERP_SEX, PERP_RACE, VIC_AGE_GROUP, VIC_SEX, 
+                             VIC_RACE, STATISTICAL_MURDER_FLAG) %>%
+                      mutate(OCCUR_DATE=mdy(OCCUR_DATE))
+
+```
+
+
+## Data Analysis 1
+
+Count the occurrences of incidents per hour during a day to give an idea of the frequent shooting time. My understanding is that crime is higher late at night when fewer people are in the street.
+
+```{r incident_time_analysis}
+## round the occur_time to hours to simplify the analysis, strip function will stip minute and seconds from the time
+
+nypd_shooting_data <- nypd_shooting_data %>%
+                  mutate(OCCUR_TIME=format(round(strptime(paste("2001-01-01",
+                                          OCCUR_TIME), format="%Y-%m-%d %H:%M"),
+                                          units="hours"), format="%H:%M"))
+
+nypd_shooting_hourly_data <- nypd_shooting_data %>%
+                            group_by(OCCUR_TIME) %>%
+                            tally(  name = "incidents_per_hour") %>%
+                            ungroup() 
+
+ nypd_shooting_hourly_data_plot <- nypd_shooting_hourly_data %>% ggplot() +
+   geom_point(aes(x=OCCUR_TIME, y=incidents_per_hour))+
+  geom_line(aes(x=OCCUR_TIME, y=incidents_per_hour , group = 1), color="blue")+
+ labs(x="Hour", y="Incident Count",
+title="Hourly Incident Count Graph(NYPD Shooting Incident)")
+
+ ggsave("nypd_shooting_hourly_data.png", nypd_shooting_hourly_data_plot, 
+        height=4, width=8, units="in",  dpi=450)
+
+knitr::include_graphics("nypd_shooting_hourly_data.png")
+
+```
+
+## Conclusion
+When the number of shooting incidents was analyzed I found out that crime rates increase as darkness and fewer people are on street and it comes down after midnight. The lowest crime is at 8 AM when most of the people are commuting to the office.
+
+## Data Analysis 2
+
+I want to find out if all boroughs of New York City crime count are following the same pattern year after year.
+
+```{r yearly_incident_analysis}
+## Group by the data to yearly and per borough
+nypd_boro_shooting_by_year <- nypd_shooting_data %>%
+                group_by(BORO, year=year(OCCUR_DATE)) %>%
+               tally( name = "incident_per_year") %>%
+                            ungroup() 
+
+nypd_shooting_year_boro_plot <- nypd_boro_shooting_by_year %>% 
+                              ggplot(aes(x=year, y=incident_per_year, colour=BORO))+
+                              geom_line(size=1) +
+                              theme_classic() + 
+                              labs(x="Year", y="Incident Count",
+                                title="Yearly Incident Count Graph")
+
+ ggsave("nypd_shooting_year_boro.png", nypd_shooting_year_boro_plot, 
+        height=4, width=8, units="in",  dpi=450)
+
+knitr::include_graphics("nypd_shooting_year_boro.png")
+
+
+```
+
+## Data Analysis 3
+
+I want to find out if all boroughs of New York City crime count are following the same pattern year after year based on population.
+
+
+This data will be cleaned by following steps:
+
+1. Select the coloum which are useful for us
+  
+2. Remove uneccesary rows
+
+3. pivot the data 
+
+4. convert data as per the need
+
+
+```{r yearly_incident_population_analysis}
+
+## get population
+ny_population_data_url <-"https://data.cityofnewyork.us/api/views/xywu-7bv9/rows.csv"
+
+ny_population_data <- read_csv(ny_population_data_url)
+
+## Tidy and clean the data
+ny_population_data <- ny_population_data %>% 
+                      select(c(2,seq(3, by = 2, len = 10))) %>%
+                      slice(2:n())%>%
+                      pivot_longer(cols = -c(Borough), names_to = "year", 
+                            values_to = "population") %>% 
+                      mutate(year=parse_number(year)) %>% 
+                      mutate(Borough = str_to_upper(Borough))
+
+## Group by the data to yearly and per borough
+nypd_boro_shooting_by_year <- nypd_shooting_data %>%
+                              group_by(BORO, year=year(OCCUR_DATE)) %>%
+                              tally( name = "incident_per_year")  %>%
+                              mutate(decade = round(year,-1))  %>%
+                            ungroup() 
+
+
+
+## Join with the population to add population to the data
+nypd_boro_shooting_by_year_with_population <- nypd_boro_shooting_by_year %>% 
+            left_join(ny_population_data, by = c("BORO" = "Borough", "decade"="year")) %>% 
+            mutate(incidents_per_mill=incident_per_year*1000000/population)
+  
+
+nypd_shooting_year_boro_pop_plot <- nypd_boro_shooting_by_year_with_population %>% 
+  ggplot(aes(x=year, y=incidents_per_mill, colour=BORO))+
+  geom_line(size=1) +
+  theme_classic() + 
+  labs(x="Year", y="Incident Count(Per Million)",
+title="Yearly Incident Count(Per Million) Graph")
+
+ ggsave("nypd_shooting_year_boro_pop.png", nypd_shooting_year_boro_pop_plot, 
+        height=4, width=8, units="in",  dpi=450)
+
+knitr::include_graphics("nypd_shooting_year_boro_pop.png")
+
+
+```
+
+## Conclusion
+
+As we can see the incident count of all the boroughs is following the same pattern, which was not that clear in the last graph for Staten LIslandsland. This also shows that the Bronx is the Borough with a high crime rate and more resources are needed in that borough to improve the situation.  Brooklyn is second highest in crime rate per million of population and rests all Borough are having Similar shooting incidents.
+
+
+
+##  Model- Try to find out if unemployment rate have any impact on the number of crimes.
+
+In this analysis, I will try to create a linear model to see if the crime rate has any relation with the unemployment rate.
+
+```{r crime_count_vs_unemployment}
+
+## get the New York Unemployment data from Federal Reserve Bank of St. Louis 
+
+ny_unemployment_data_url <-"https://fred.stlouisfed.org/graph/fredgraph.csv?bgcolor=%23e1e9f0&chart_type=line&drp=0&fo=open%20sans&graph_bgcolor=%23ffffff&height=450&mode=fred&recession_bars=on&txtcolor=%23444444&ts=12&tts=12&width=1168&nt=0&thu=0&trc=0&show_legend=yes&show_axis_titles=yes&show_tooltip=yes&id=NYUR&scale=left&cosd=1976-01-01&coed=2021-12-01&line_color=%234572a7&link_values=false&line_style=solid&mark_type=none&mw=3&lw=2&ost=-99999&oet=99999&mma=0&fml=a&fq=Monthly&fam=avg&fgst=lin&fgsnd=2020-02-01&line_index=1&transformation=lin&vintage_date=2022-01-30&revision_date=2022-01-30&nd=1976-01-01"
+
+ny_unemployment_data <- read_csv(ny_unemployment_data_url)
+
+## tidy and clean the data to get Annual Unemployment Rate
+ny_unemployment_data <- ny_unemployment_data%>% 
+  mutate(year=year(DATE)) %>%
+  group_by(year) %>%
+  summarize(UER=mean(NYUR)) %>%
+                            ungroup() 
+
+## try to get shooting incident per yeam
+nypd_total_shooting_by_year <- nypd_boro_shooting_by_year %>%
+                              group_by(year) %>%
+                             summarize(total_incidents=sum(incident_per_year)) %>%
+                            ungroup() 
+
+incidents_vs_uemployment <- nypd_total_shooting_by_year %>% 
+            left_join(ny_unemployment_data)
+
+mod <- lm(total_incidents ~ UER, data=incidents_vs_uemployment)
+
+nypd_incident_w_pred <- incidents_vs_uemployment %>% mutate(pred=predict(mod))
+
+
+nypd_incident_w_pred_plot <- nypd_incident_w_pred %>% ggplot() +
+  geom_point(aes(x=UER, y=total_incidents), color="blue") +
+   geom_point(aes(x=UER, y=pred), color="red")+
+  labs(x="Unemployment Rate", y="Incident Count",
+title="Unemployment Rate vs Incident Count")
+
+ggsave("nypd_incident_w_pred_plot.png", nypd_incident_w_pred_plot, 
+       height=4, width=8, units="in",  dpi=450)
+
+knitr::include_graphics("nypd_incident_w_pred_plot.png")
+
+```
+
+##  Conclusion
+
+The linear model is showing the correlation between high incidents and high unemployment Rate but this needs improvement when the unemployment rate is low. As we can see the model is not predicting the correct relationship when the unemployment rate is less than 5%.
+
+
+## Bias in my Analysis
+
+I can potentially see the biases in my analysis by treating all the boroughs and people the same but the crime rate depends on a lot of factors depending on Social economical factors like income, race, and political leaning. 
+
+## Session Information for the R Environment Information
+
+```{r }
+sessionInfo()
+```
